@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "dsh-muv-table",
   "version": "0.1.0",
   "description": "MUV 变量表格编辑器 —— 将 MUV 角色卡的 Zod Schema 渲染为结构化表格，Agent 直接编辑表格即可生成正确的 <UpdateVariable> 块，避免 DeepSeek 漏变量格式问题",
