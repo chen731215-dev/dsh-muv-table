@@ -1,7 +1,7 @@
 {
   "name": "dsh-muv-table",
-  "version": "0.1.0",
-  "description": "MUV 变量表格编辑器 —— 将 MUV 角色卡的 Zod Schema 渲染为结构化表格，Agent 直接编辑表格即可生成正确的 <UpdateVariable> 块，避免 DeepSeek 漏变量格式问题",
+  "version": "0.2.0",
+  "description": "MUV 变量表格编辑器 —— 树形变量面板、宏测试浮窗（random/pick/roll）、骰子快捷栏、pick 缓存管理",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -9,29 +9,13 @@
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
-  "files": [
-    "lib",
-    "cordis.patch.yml"
-  ],
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "deepseek-harness",
-    "muv",
-    "magvarupdate",
-    "tavern",
-    "variable-table"
-  ],
+  "files": ["lib", "cordis.patch.yml", "CHANGELOG.md"],
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "muv", "magvarupdate", "tavern", "variable-table"],
   "license": "PolyForm-Noncommercial-Copyleft-1.0.0",
   "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web"
-    }
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web" }
   },
-  "repository": {"type": "git", "url": "git+https://github.com/chen731215-dev/dsh-muv-table.git"},`n  "engines": {
-    "node": ">=20"
-  }
+  "repository": {"type": "git", "url": "git+https://github.com/chen731215-dev/dsh-muv-table.git"},
+  "engines": { "node": ">=20" }
 }
