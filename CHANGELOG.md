@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.2.2 (2026-09-13)
+
+### 🐛 修复
+
+- **exports 放开 `./lib/*` 子路径**：`dsh-muv-engine` 需要导入本包的
+  `lib/muv-parser.js`、`lib/block-generator.js`、`lib/initvar-parser.js`，
+  但 `exports` 只映射了 `.` 与 `./client`，子路径导入会被 Node 的 exports 门禁拦住：
+
+  ```
+  import('dsh-muv-table/lib/muv-parser.js')
+    -> ERR_PACKAGE_PATH_NOT_EXPORTED
+  ```
+
+  新增 `"./lib/*": "./lib/*"` 后即可正常解析。
+
+### 🔧 改进
+
+- **`panel.html` 读取改为容错**：原先在模块加载时直接
+  `const PANEL_HTML = fs.readFileSync(...)`，一旦文件缺失就抛 `ENOENT`。
+  由于模块加载失败会让所在 loader 行激活失败，而 DSH 启动时会校验每一行，
+  这会让**整个 DSH 起不来**。改为 `let PANEL_HTML = ''` + `try/catch` 兜底。
+  此改动与已发布的 0.2.1 npm 包保持一致（git 仓库此前落后于发布版）。
+
+### 📝 注意
+
+- `lib/panel.html` 被 `.gitignore` 排除，因此**从 `git clone` 的目录直接
+  `dsh plugin add <路径>` 安装时该文件不存在**。容错改动后不会再导致启动失败，
+  但面板内容会为空 —— 请走 npm registry 安装。
+
+---
+
 ## v0.2.0 (2026-08-27)
 
 ### ✨ 新功能
