@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.4 (2026-09-13)
+
+### 📝 文档
+
+- `package.json` 的 `description` 补上「是 `dsh-muv-engine` 的伴生插件」。
+  插件市场与 npm 的条目会带上这句，避免用户只装了引擎却奇怪变量表格为什么不显示。
+- 同步收录到 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
+  精选列表（`category: ui`），与另外两个插件一起。
+
+> 无代码改动。未改动许可证内容。
+
+---
+
 ## v0.2.3 (2026-09-13)
 
 ### 🐛 修复
