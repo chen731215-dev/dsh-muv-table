@@ -1,6 +1,6 @@
 {
   "name": "dsh-muv-table",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "MUV 变量表格编辑器 —— 树形变量面板、宏测试浮窗（random/pick/roll）、骰子快捷栏、pick 缓存管理",
   "type": "module",
   "main": "lib/index.js",

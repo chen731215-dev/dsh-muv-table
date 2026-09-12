@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.3 (2026-09-13)
+
+### 🐛 修复
+
+- **DSH 装到非默认位置时读不到预设**：`PRESETS_ROOT` 等路径写死为 `~/.dsh`。
+  DSH 本体按 `$DSH_HOME`（非空）→ `~/.dsh` 解析 home，用户预设目录是
+  `<dshHome>/.agent-presets`。`DSH_HOME` 非默认时本插件扫的是错误目录，
+  角色卡列表恒为空。
+
+  现在与酒馆插件保持一致：`apply()` 时优先取 DSH 的 `dshHomePath` 服务，
+  拿不到再按环境变量解析，并同步绑定 `PRESETS_ROOT` / `TAVERN_PRESET_DIR`
+  / `session-bindings.json`。
+
+> 未改动任何许可证内容。
+
+---
+
 ## v0.2.2 (2026-09-13)
 
 ### 🐛 修复
