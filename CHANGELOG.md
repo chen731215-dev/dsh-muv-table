@@ -1,38 +1,6 @@
 # Changelog
 
-## v0.2.8 (2026-09-20)
-
-### 🐛 修复：Zod「变量结构」整类读不到（覆盖面最大的一个）
-
-parseMuvCard() 取 Zod schema 时用的是**精确等值** `s.name === 'zod'`，而真机上的卡
-几乎不这么命名（「变量结构」「星辉zod」…）——**一个都对不上**，zodSource 恒为空。
-Zod（`z.object({...})` / `registerMvuSchema`）是 MUV 最主流的 schema 载体，
-读不到等于整张卡的变量表建不出来，而且是静默失败。
-
-现在按两条线索找：**名字含 zod**，或**内容像 Zod schema**（`z.object(` /
-`registerMvuSchema` / `prefault(` 等）。
-实测：`_足控天堂2` 0 → **148106** 字符；`异世界农场` 0 → **953** 字符。
-
-### 🐛 修复：面板把 `@deepseek-ai/dsh-persona` 当卡名显示
-
-`extractMuvFromYml()` 的 `^\s*name:` 兜底会吃到 YAML 里的**服务声明**
-（`name: '@deepseek-ai/dsh-persona'`）。隔壁 `extractCardNameFromYml()` 有
-`@`/`/` 守卫，这里漏了。面板会把它显示成卡名并写进 localStorage 粘住。已补上同一守卫。
-
-### 🐛 修复：`<VariableInsert>` 形态的卡建不出变量表
-
-（由上一版引入的 `extractVariableInsert()` 修复，此处一并记录）
-`_足控天堂2` 的变量树在 `first_mes` 的 `<VariableInsert>{JSON}</VariableInsert>` 里，
-卡中**没有 `<initvar>`**，而 PNG 卡主路径走的 `parseMuvCard()` 只扫
-`alternate_greetings` 的 `<initvar>` → `schemas: 0`。现在 `parseMuvCard()` 在
-`initvarBlocks` 为空时回退到 `<VariableInsert>`，`<initvar>` 卡行为完全不变。
-实测 `schemas` 0 → **8**（世界信息/主角信息/公司/道具系统/剧情事件/因特网/剧情选项/主播档案）。
-
-> 回归：`node test-png-card.mjs` 12 → **28** 项；
-> 复现脚本 `repro-variableinsert.mjs` 留在仓库里可直接跑（进程内挂真实路由，不需要重启 DSH）。
-
-## Unreleased
-
+## v0.2.10 (2026-09-20)
 ### 🐛 修复：变量面板读不到「足控天堂2」这种卡的变量表
 
 **现象**（已复现）：`GET /api/muv-table/tavern-card?presetId=…` 对这张卡返回
@@ -275,6 +243,49 @@ first_mes, …}`），但 `parseMuvCard` 只认 `cardJson.data` → 卡名对了
 （`苍玄界` 的对应条目叫 `[mvu_update]变量输出格式`，是文档不是数据 —— 两个前缀是有区别的，
 但 `[initvar]` 万一也是文档就会解析出垃圾表）。留待决定。现状已用
 `test-muv-parser.mjs` 的第 [10] 节**钉住**（含「没有标签」这条断言），改动必然是有意的。
+
+## v0.2.9 (2026-09-20)
+### 🐛 修复：面板「不管点哪个会话都显示同一张卡」
+
+服务端无问题（按 `presetId` 请求时每个预设都返回各自的卡）。根因在客户端：它一直发同一个
+预设——因为它依赖酒馆 DOM，而 `#tavern-session-preset-label` 的 `dataset.presetId`
+在切换会话时不一定更新（酒馆自己 `bundle.js:1655` 用 `savedPid || 旧值`，`savedPid`
+为空时**保留旧值**），`localStorage` 那份更是切换预设时才写。**切换会话根本不会更新它们。**
+
+改为**优先用当前 DSH 会话 id 请求**：服务端按 `session-bindings.json` 查出该会话绑定的预设，
+切换会话必然跟着变，不会粘。实测 4/5 会话正确解析（第 5 个 `minimal-gitbash` 本身无卡）。
+
+注意只传一个定位参数且会话 id 优先——服务端判定顺序是 `if (presetId) … else if (sessionId) …`，
+两个都传时**可能粘住的那个会盖掉可靠的**。
+## v0.2.8 (2026-09-20)
+### 🐛 修复：Zod「变量结构」整类读不到（覆盖面最大的一个）
+
+parseMuvCard() 取 Zod schema 时用的是**精确等值** `s.name === 'zod'`，而真机上的卡
+几乎不这么命名（「变量结构」「星辉zod」…）——**一个都对不上**，zodSource 恒为空。
+Zod（`z.object({...})` / `registerMvuSchema`）是 MUV 最主流的 schema 载体，
+读不到等于整张卡的变量表建不出来，而且是静默失败。
+
+现在按两条线索找：**名字含 zod**，或**内容像 Zod schema**（`z.object(` /
+`registerMvuSchema` / `prefault(` 等）。
+实测：`_足控天堂2` 0 → **148106** 字符；`异世界农场` 0 → **953** 字符。
+
+### 🐛 修复：面板把 `@deepseek-ai/dsh-persona` 当卡名显示
+
+`extractMuvFromYml()` 的 `^\s*name:` 兜底会吃到 YAML 里的**服务声明**
+（`name: '@deepseek-ai/dsh-persona'`）。隔壁 `extractCardNameFromYml()` 有
+`@`/`/` 守卫，这里漏了。面板会把它显示成卡名并写进 localStorage 粘住。已补上同一守卫。
+
+### 🐛 修复：`<VariableInsert>` 形态的卡建不出变量表
+
+（由上一版引入的 `extractVariableInsert()` 修复，此处一并记录）
+`_足控天堂2` 的变量树在 `first_mes` 的 `<VariableInsert>{JSON}</VariableInsert>` 里，
+卡中**没有 `<initvar>`**，而 PNG 卡主路径走的 `parseMuvCard()` 只扫
+`alternate_greetings` 的 `<initvar>` → `schemas: 0`。现在 `parseMuvCard()` 在
+`initvarBlocks` 为空时回退到 `<VariableInsert>`，`<initvar>` 卡行为完全不变。
+实测 `schemas` 0 → **8**（世界信息/主角信息/公司/道具系统/剧情事件/因特网/剧情选项/主播档案）。
+
+> 回归：`node test-png-card.mjs` 12 → **28** 项；
+> 复现脚本 `repro-variableinsert.mjs` 留在仓库里可直接跑（进程内挂真实路由，不需要重启 DSH）。
 
 ## v0.2.7 (2026-09-20)
 
