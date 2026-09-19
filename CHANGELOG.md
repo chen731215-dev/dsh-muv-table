@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.12 (2026-09-20)
+
+### 🐛 修复：发布包里缺 `test-cards.mjs`，导致随包发布的 `test-muv-parser.mjs` 装完跑不起来
+
+`files` 字段列了 `test-muv-parser.mjs`，但它 `import` 的 `test-cards.mjs` **没被列进去**。
+从 npm 装下来的副本里跑它会直接
+`ERR_MODULE_NOT_FOUND: .../node_modules/dsh-muv-table/test-cards.mjs`。
+（**开发树里不会暴露这个问题** —— 仓库里那个文件一直都在。这是只有
+「装已发布的包再跑」才能发现的缺陷，也正是这条验证路径的价值所在。）
+纯打包修复，运行时代码一字未动。
+
 ## v0.2.11 (2026-09-20)
 ### 🐛 修复：世界书里「没有 `<initvar>` 标签、只有 `[initvar]` 注释前缀」的裸 YAML 变量树读不到
 
