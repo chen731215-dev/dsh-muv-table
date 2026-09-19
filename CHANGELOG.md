@@ -90,6 +90,191 @@ initvarBlocks: 0
 > 而是放在世界书条目 `[initvar]变量初始化勿开` 的 `content` 里，因此它的
 > `schemas` 依然是 0。那是另一套投递方式（世界书），不是本次的
 > `<VariableInsert>` 问题，需要单独决定是否要让面板读世界书。
+>
+> **更新（下一节「变量块来源」）**：世界书/脚本里**带 `<initvar>` / `<VariableInsert>`
+> 标签**的块现在能读了。但 `异世界农场` 那条世界书条目是**没有标签的裸 YAML**
+> （content 里只有 `时间:`、`种族好感度:` 这样的裸文本），按标签扫描依然扫不到，
+> 它的 `schemas` 仍是 0 —— 这一条需要一条**新规则**才能接住，见下一节末尾
+> 「仍未修 / 待决定」。
+
+---
+
+### 🔴 修复：initvar 列表值被吞成空对象（内容静默丢失）
+
+**现象**（`苍玄界` 实测，已复现）：卡里写的是
+
+```
+最近互动记录:
+  - 因为想吃灵鹤被{{user}}抓包，目前心虚加不知所措。
+```
+
+解析结果却是 `最近互动记录 = {}` —— **内容消失，且不进 schema**。该卡 initvar 共 65 个
+叶子行，`人际交往.结识道友录.沈慕微.最近互动记录` 与 `人际交往.结识道友录.江念.最近互动记录`
+两条路径**都不在 schema 里**（含这两条路径的叶子 = 0）。
+
+**根因**：`lib/initvar-parser.js` 两处配合出事——
+
+- 空值建空对象：`键: ` 后面为空就被当成「嵌套对象的开始」；
+- 无冒号的行直接丢弃：紧随其后的 `- item` 是列表项、没有冒号，被整行 `continue` 掉。
+
+于是「空值 + 下一行 `- `」这种写法（`苍玄界`、以及 MUV 原生卡的常规形态）必然退化成空对象。
+
+**修法**（`lib/initvar-parser.js` 为主）：
+
+- 栈帧改为记录「开启它的键 + 持有它的父对象」。`- item` 行归属**最内层待定键**：
+  该键若仍是空对象，就说明它其实是列表 → 原地替换成数组再追加。判定放在出栈**之前**
+  （列表允许与它的键同缩进）。
+- 列表项按标量解析（`- 3` → `3`）；列表下再出现的 `键: 值` 保留成条目文本，不静默丢行。
+- `serializeInitvar()` 把数组写回 `键:` + `  - item`（空数组写 `[]`），`parseValue('[]')` → `[]`，
+  列表**往返一致**。
+- `inferSchemaFromData()` / `index.js: inferSchemas()` / `client.js: renderField`：
+  列表行按换行拼接显示并带 `isList: true`；`applyEditsAndGenerate()` 把「编辑成多行文本」的列表行
+  再切回数组，生成块仍是 `- ` 列表，不会被拍平成 `a,b`。
+
+**实测数据**：
+
+- `repro-initvar-list.mjs`：改前 **7 项不通过** → 改后全通过；叶子行 **65 → 67**。
+- 真实卡往返一致性：`苍玄界`（16 个 initvar 块）+ 其 `.json` 共 **34 块**，
+  解析 → 序列化 → 解析 **逐字节一致**（改前 34 块里 32 块不一致）。
+- 引擎端到端（不改 `dsh-muv-engine`，只调用它）：`parseLatestInitvar → mergeState → generateBlock`
+  用 `苍玄界` 真实问候语跑通，合并后列表仍在，生成行是
+  `        - 因为想吃灵鹤被{{user}}抓包，目前心虚加不知所措。`，回读一致。
+
+### 🔴 附带发现：`键: ""` 往返变成 `{}`（类型静默翻转）
+
+**现象**：`苍玄界` 的 `世界系统.在场角色: ""`，生成块时被写成裸的 `在场角色: `，
+下次解析回来变成 `{}`（空对象）—— 同一个字段的形状在往返中变了。
+**根因**：`parseValue('""') → ''`，而 `formatValue('') → ''`；写出去的那一行看起来正是「空值 = 嵌套对象开始」。
+**修法**：`formatValue('')` 输出 `""`（卡片自己就是这么写的，等于沿用卡的惯例）。
+**实测**：上面那条 34 块往返一致性用例就是它的哨兵 —— 改前所有不一致都出自这一处，改后为 0。
+
+### 🔴 修复：`presetId` 不存在时静默返回另一张卡
+
+**现象**（已复现）：`GET /api/muv-table/tavern-card?presetId=does-not-exist`
+
+```
+HTTP 200 { ok:true, found:true, cardName:'川上富江', presetDir:'tavern-lite' }
+```
+
+用户以为在看自己的卡，其实拿到的是 tavern-lite 的卡。预设改名（历史上「深渊区」→「精简酒馆」）
+或重名，一样中招。
+
+**根因**：`lib/index.js` 里 `let presetDir = …; if (!fs.existsSync(presetDir)) presetDir = TAVERN_PRESET_DIR`
+—— 任何一步定位失败都**无条件**换成硬编码的 tavern-lite，而且响应里没有任何字段说明「这不是你要的那张」。
+
+**修法**：定位结果分来源，且**失败就明说**：
+
+| 请求 | 行为 |
+| --- | --- |
+| `presetId` 存在 | 用它，`presetSource: 'explicit'` |
+| `presetId` 不存在 | `found:false`，`error: preset not found: <id>`，附 `availablePresets` 清单 |
+| `sessionId` 绑定到真实预设 | 用它，`presetSource: 'session'` |
+| `sessionId` 绑定**已消失**（改名） | `found:false`，`error: preset bound to session … not found: <旧名>` |
+| `sessionId` 绑定为 `default` / 无绑定 | 用酒馆自己的默认（tavern-lite），`presetSource: 'session-default'` |
+| 两个定位参数都没给 | 按「最近写入的会话」猜，`presetSource: 'active'`；猜不到才用默认，`presetSource: 'default'` |
+
+- `default` 这条**是照抄酒馆的规则**，不是猜：`dsh-tavern` 的
+  `lib/index.js:2404` 就是 `if (currentPresetId === 'default') currentPresetId = 'tavern-lite'`，
+  `GET /api/tavern/presets` 也返回 `defaultPresetId: 'tavern-lite'`。
+  区别在于现在响应里**标明了**来源，而不是混在 `found:true` 里让人看不出来。
+- `presetId` / `sessionId` 一律当**目录名**解析，带 `\` `/` 或 `..` 的直接判不存在（顺带收紧路径穿越）。
+- 成功响应统一新增 `presetSource`；`/api/muv-table/active-preset` 不再返回
+  `fallback: 'tavern-lite'`（那个字段暗示仍会回退到固定预设，已不成立）。
+
+**实测数据**：`repro-preset-not-found.mjs` 改前 **4 项不通过**（复现「静默换卡」）→ 改后全通过；
+新增 `test-preset-resolve.mjs` 用**临时 DSH_HOME** 造 6 个假预设/假卡，**30 项全通过**
+（含 `?sessionId=` 的四种绑定形态，以及畸形卡不再 500）。
+
+### 🟠 修复：变量块的来源只扫 4 个字段，世界书 / helper 脚本读不到
+
+**现象**：`<initvar>` / `<VariableInsert>` 只可能在 `first_mes` / `description` / `scenario` /
+`alternate_greetings` 里被找到。写在 `character_book.entries[].content` 或
+`tavern_helper` 脚本里的变量块，整张卡的变量表就是空的。
+
+**修法**（`lib/muv-parser.js`）：新增 `variableTextCandidates(data)`，把四个字段、世界书条目
+（`character_book.entries[].content`，`where` 带上 `comment` 便于排查）、
+`extensions.tavern_helper.scripts[].content` 一起纳入候选集，并给每个候选打**分组**，
+让调用方能按「问候语级来源优先」取用。优先级（**先到先得**）：
+
+1. `alternate_greetings` 里的 `<initvar>`（16 个都要，行为不变）
+2. `first_mes` → `description` → `scenario` 里的 `<initvar>`（顺带把 `scenario` 补上 ——
+   `<VariableInsert>` 一直认它，`<initvar>` 不认，两条路本来就不对称）
+3. 任意来源（含世界书/脚本）里的 `<VariableInsert>`，第一个能 `JSON.parse` 成对象的块
+4. **最后**才看世界书/脚本里的 `<initvar>`
+
+第 4 步排在 `<VariableInsert>` 之后是刻意的：世界书和脚本里塞满了**引用标签的示例**
+（`苍玄界` 的 `[mvu_update]变量输出格式`、`_足控天堂2` 的 `ERA 变量操作规则/意图说明`），
+示例更可能是「能解析成垃圾、但不会抛异常」的裸 `<initvar>` 骨架，所以把它压到最后。
+**非法 JSON 继续往后找、全程不抛异常**这条行为有专门的用例守着。
+
+**实测数据**：`repro-parser-robustness.mjs` 改前 9 项不通过 → 改后全通过。
+`_足控天堂2` 的 8 组 schema、`公司.总现金 = 40000` 与 `主播档案.$template` 剔除全部不变
+（世界书里那两份文档块**没有**被误命中）。
+
+### 🟠 修复：畸形卡让端点 500
+
+**现象**：`alternate_greetings` 是**对象**（不是数组）时，`data.alternate_greetings || []`
+之后的 `for...of` 抛 `TypeError: greetings is not iterable` →
+`/api/muv-table/tavern-card` 直接 500。同理还有两处：`tavern_helper.scripts` 不是数组时
+`scripts.find is not a function`；世界书 `entries` 不是数组时同样炸。
+
+**修法**：`asArray()` 统一归一化 `alternate_greetings` / `character_book.entries` /
+`tavern_helper.scripts`；条目为 `null` 也跳过。
+
+**实测数据**：改前抛 3 个 TypeError（脚本里的 `scripts.find` 是复现时才发现的第三处），
+改后 `parseMuvCard(null)`、对象版 `alternate_greetings`、`entries: [null, 7, …]` 全部不抛异常；
+端点用例里那张畸形卡从 **500 → 200 + `schemas: []`**（同张卡别的内容照旧返回）。
+
+### 🟠 修复：扁平 V1 JSON 卡读成 0 字段
+
+**现象**：`findJsonMatch` 能按卡名找到**没有 `data` 包装**的扁平 V1 卡（`{name, description,
+first_mes, …}`），但 `parseMuvCard` 只认 `cardJson.data` → 卡名对了、变量表 0 字段。
+`regexScriptsOf()` 同样只认 `cardJson.data.extensions.regex_scripts`，扁平卡的正则脚本也一起丢。
+
+**修法**：新增 `cardData(cardJson)`：有对象型 `data` 就用它，否则**把卡本身当 data**
+（规格 v1 就是这样）。`regexScriptsOf()` 用同一套判定。
+
+**实测数据**：扁平卡的 `<initvar>` / `<VariableInsert>` 从 0 → 正常建表；
+有 `data` 包装的卡仍然以 `data` 为准（回归用例守住）。
+
+### 🧪 本轮新增的哨兵 / 回归
+
+| 文件 | 作用 |
+| --- | --- |
+| `repro-initvar-list.mjs` | ① 最小复现（`苍玄界` 真实卡）。改前 7 失败 → 改后 0 |
+| `repro-preset-not-found.mjs` | ② 最小复现。改前 4 失败 → 改后 0 |
+| `repro-parser-robustness.mjs` | ③④⑤ 最小复现。改前 9 失败 → 改后 0 |
+| `test-muv-parser.mjs` | 解析器回归 **56 项**（含真实卡往返一致性、列表 schema 形状、编辑回写、畸形卡） |
+| `test-preset-resolve.mjs` | 端点回归 **30 项**（临时 DSH_HOME，不碰真实环境） |
+| `test-cards.mjs` | 测试用的真实卡定位辅助（找不到就 SKIP，不失败） |
+
+原有基线不变：`node test-png-card.mjs` **28 通过**；
+`node C:\dsh-muv-engine\test-status-cascade.mjs` **84 通过**。
+
+### ⏭ 仍未修 / 待决定：世界书里**没有标签**的 `[initvar]` 条目
+
+`异世界农场.png` 的初始值放在世界书条目 `[initvar]变量初始化勿开` 的 content 里，
+但那份 content 是**裸 YAML、没有 `<initvar>` 标签**：
+
+```
+时间:
+  日期: '05-20'
+  …
+种族好感度: …
+个人好感度: {}
+```
+
+所以按标签扫描（本节这套）扫不到它，该卡 `schemas` 仍是 0（它的变量表实际由
+`tavern_helper` 里的 Zod 结构定义，`zodSource` 953 字符，已能读到，但面板是用
+`initvarData` 建行的）。要接住它需要一条**新**规则，例如：
+
+> 彻底找不到变量块时，再找 `comment` 以 `[initvar]` 开头的世界书条目，把 `content`
+> 当 initvar 块解析（预计 `异世界农场` 会从 0 变成 `时间` / `种族好感度` / `个人好感度` 三组）。
+
+**本轮没做**：它超出「扫这两个来源里的标签」的范围，而且会引入「注释前缀」这一层新判定
+（`苍玄界` 的对应条目叫 `[mvu_update]变量输出格式`，是文档不是数据 —— 两个前缀是有区别的，
+但 `[initvar]` 万一也是文档就会解析出垃圾表）。留待决定。现状已用
+`test-muv-parser.mjs` 的第 [10] 节**钉住**（含「没有标签」这条断言），改动必然是有意的。
 
 ## v0.2.7 (2026-09-20)
 
