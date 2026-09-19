@@ -1,0 +1,6 @@
+# dsh-muv-table bundle patch: mounts the MUV table editor plugin.
+# The plugin parses MUV character cards, renders Zod schemas as
+# structured tables, and generates correct <UpdateVariable> blocks.
+- insert:
+    - id: muv-table
+      name: 'dsh-muv-table'
