@@ -42,7 +42,7 @@ MUV 变量表格编辑器 —— 酒馆伴生插件。
 **这是变量数据唯一还存在的地方**。现在会从这里提取，支持
 `<VariableInsert>{…JSON…}` 与 MUV 原生的 `<UpdateVariable><initvar>…</initvar>` 两种编码。
 
-> 回归测试：`node test-png-card.mjs`（12 项，含真实卡库验证）
+> 回归测试：`node test-png-card.mjs`（28 项，含真实卡库验证）
 
 
 ## 是什么
@@ -94,7 +94,8 @@ dsh plugin --profile web add dsh-muv-table
 | 类型 | 说明 |
 |------|------|
 | 有 `<initvar>` 默认数据 | 直接显示完整变量表 |
-| 无 `<initvar>`（如瑟瑟提瓦特） | 显示空表，LLM 输出 UpdateVariable 后自动填充 |
+| 有 `<VariableInsert>{…JSON…}`（如足控天堂2） | 直接显示完整变量表（`主播档案.$template` 不算条目） |
+| 两者都没有（如瑟瑟提瓦特） | 显示空表，LLM 输出 UpdateVariable 后自动填充 |
 
 ## 协议
 

@@ -1,5 +1,96 @@
 # Changelog
 
+## v0.2.8 (2026-09-20)
+
+### 🐛 修复：Zod「变量结构」整类读不到（覆盖面最大的一个）
+
+parseMuvCard() 取 Zod schema 时用的是**精确等值** `s.name === 'zod'`，而真机上的卡
+几乎不这么命名（「变量结构」「星辉zod」…）——**一个都对不上**，zodSource 恒为空。
+Zod（`z.object({...})` / `registerMvuSchema`）是 MUV 最主流的 schema 载体，
+读不到等于整张卡的变量表建不出来，而且是静默失败。
+
+现在按两条线索找：**名字含 zod**，或**内容像 Zod schema**（`z.object(` /
+`registerMvuSchema` / `prefault(` 等）。
+实测：`_足控天堂2` 0 → **148106** 字符；`异世界农场` 0 → **953** 字符。
+
+### 🐛 修复：面板把 `@deepseek-ai/dsh-persona` 当卡名显示
+
+`extractMuvFromYml()` 的 `^\s*name:` 兜底会吃到 YAML 里的**服务声明**
+（`name: '@deepseek-ai/dsh-persona'`）。隔壁 `extractCardNameFromYml()` 有
+`@`/`/` 守卫，这里漏了。面板会把它显示成卡名并写进 localStorage 粘住。已补上同一守卫。
+
+### 🐛 修复：`<VariableInsert>` 形态的卡建不出变量表
+
+（由上一版引入的 `extractVariableInsert()` 修复，此处一并记录）
+`_足控天堂2` 的变量树在 `first_mes` 的 `<VariableInsert>{JSON}</VariableInsert>` 里，
+卡中**没有 `<initvar>`**，而 PNG 卡主路径走的 `parseMuvCard()` 只扫
+`alternate_greetings` 的 `<initvar>` → `schemas: 0`。现在 `parseMuvCard()` 在
+`initvarBlocks` 为空时回退到 `<VariableInsert>`，`<initvar>` 卡行为完全不变。
+实测 `schemas` 0 → **8**（世界信息/主角信息/公司/道具系统/剧情事件/因特网/剧情选项/主播档案）。
+
+> 回归：`node test-png-card.mjs` 12 → **28** 项；
+> 复现脚本 `repro-variableinsert.mjs` 留在仓库里可直接跑（进程内挂真实路由，不需要重启 DSH）。
+
+## Unreleased
+
+### 🐛 修复：变量面板读不到「足控天堂2」这种卡的变量表
+
+**现象**（已复现）：`GET /api/muv-table/tavern-card?presetId=…` 对这张卡返回
+
+```
+cardName    : _足控天堂2
+cardSource  : library
+fileName    : _足控天堂2.png
+schemas     : 0        ← 面板靠 schemas 建表，为 0 就什么都显示不出来
+initvarData : {}
+initvarBlocks: 0
+```
+
+`lib/client.js` 里 `schemas.length === 0` 直接渲染空态，所以整张变量表是空的。
+
+**根因**：这张卡把变量定义写在一句话的
+`<VariableInsert>{ …JSON… }</VariableInsert>` 里（在 `first_mes` = 【主页】），
+**卡里根本没有 `<initvar>`**。而 PNG 卡主路径调用的 `parseMuvCard()`
+只扫 `alternate_greetings` 里的 `<initvar>`，扫不到就返回 0 个 schema。
+
+仓库里本来就有能处理 `<VariableInsert>` 的 `extractMuvFromCharactersJson()`，
+但它只在退路分支（`loadRawCardForPreset` 返回 null、退回 `characters.json`）里被调用。
+主路径从卡库匹配到 PNG 后直接 `return`，把它整个跳过了 —— 数据就在卡里，没人读。
+
+**修法**：把 `<VariableInsert>` 支持下沉到 `lib/muv-parser.js` 的 `parseMuvCard()`，
+让主路径和退路共用同一份解析（`dsh-muv-engine` 也从这里 import `parseMuvCard`，一并受益）：
+
+- 新增导出 `extractVariableInsert(data)`：按 `first_mes` → `description` →
+  `scenario` → `alternate_greetings` 顺序找 `<VariableInsert>`，取第一个能
+  `JSON.parse` 成对象的块；这一块不是 JSON 就继续往后找，全程不抛异常。
+- **只有一个 `<initvar>` 都没找到时才走这条兜底**，所以原先正常的 `<initvar>` 卡
+  行为完全不变（回归用例 [6] 守住这一点）。
+- 顺带补上：`<initvar>` 也可能写在 `first_mes` / `description` 里，原先只看
+  `alternate_greetings` 同样会漏。该分支也只在 `alternate_greetings` 没找到时才生效。
+- 新增导出 `stripPlaceholderEntries(data)`：去掉 `主播档案.$template`。它是卡自己
+  留下的「一个主播长什么样」的占位模板，不是真实主播，当角色渲染会在表里多出一行
+  假主播。（这条规则原先只写在 `extractMuvFromCharactersJson()` 里，现在两处共用。）
+
+**测试**：`test-png-card.mjs` 12 项 → **28 项**，新增 [5][6][7] 三节：
+
+- **[5]** 合成一张 `<VariableInsert>` PNG 卡（不依赖本机卡库）验证：能建表、顶层键
+  齐全、`$template` 不成行、数值仍是 `number` 不是 `string`。
+- **[6]** 反向保护：`<initvar>` 卡不会被 `<VariableInsert>` 抢走、`first_mes` 里的
+  `<initvar>` 也认、坏 JSON 不抛异常、没有变量块的卡照样返回有效结构。
+- **[7]** 真实卡 `_足控天堂2.png`：`schemas` 非空、顶层键含
+  `世界信息/主角信息/公司/道具系统/剧情事件/因特网/剧情选项/主播档案`、
+  `主播档案` 下是 `超天酱`（不是 `$template`）、`数值.压力值` 可编辑。
+
+新增 `repro-variableinsert.mjs`：用 `apply()` 挂载真实路由、在进程内请求
+`/api/muv-table/tavern-card`（等价于浏览器那条路，但不需要重启 DSH）。
+改前 5 项不通过（复现 `schemas: 0`），改后全通过。这个脚本留在仓库里，
+以后再有人动 `parseMuvCard` 可以拿它当哨兵。
+
+> 已知相邻问题（本次**未**修）：`异世界农场.png` 的初始变量不是放在卡文本里，
+> 而是放在世界书条目 `[initvar]变量初始化勿开` 的 `content` 里，因此它的
+> `schemas` 依然是 0。那是另一套投递方式（世界书），不是本次的
+> `<VariableInsert>` 问题，需要单独决定是否要让面板读世界书。
+
 ## v0.2.7 (2026-09-20)
 
 ### 📦 发布内容修正
