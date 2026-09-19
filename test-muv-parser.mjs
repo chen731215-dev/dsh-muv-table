@@ -8,6 +8,8 @@
 //   ④ alternate_greetings（或 entries / scripts）是对象时 for...of 抛 TypeError → 端点 500
 //   ⑤ 扁平 V1 卡（没有 data 包装）能被 findJsonMatch 找到，却被 parseMuvCard 读成 0 字段
 //   ⑥ `键: ""` 空字符串被序列化成裸的 `键: `，再解析回来变成 `{}`（类型静默翻转）
+//   ⑦ 世界书里只有注释前缀 `[initvar]`、没有 `<initvar>` 标签的裸 YAML 条目读不到
+//      → 该卡 schemas 永远是 0（`异世界农场`）；[11] 节连四道闸一起钉住
 //
 // 真实卡只在存在时才测（缺失 → SKIP），合成卡负责精确覆盖每条分支。
 
@@ -343,13 +345,11 @@ if (!fk) {
 }
 
 // ─────────────────────────────────────────────────────────
-// 这条是**钉住现状**，不是本次要修的东西：世界书里还有一种「没有 <initvar> 标签、
-// 只有注释前缀 [initvar] 的裸 YAML」投递方式（`异世界农场` 的
-// `[initvar]变量初始化勿开` 就是它，content 里只有 `时间:`/`种族好感度:` 这样的裸文本）。
-// 按标签扫描（③ 要求的那套）确实扫不到它，所以那张卡依然是 schemas: 0。
-// 要接住它需要一条**新的**判定规则（例如「comment 以 [initvar] 开头的世界书条目，
-// 在彻底找不到变量块时把 content 当 initvar 块解析」），那是另一个决定 —— 见 CHANGELOG。
-console.log('\n[10] 真实卡：异世界农场 —— 裸 [initvar] 世界书条目（现状钉住）')
+// 世界书里还有第三种投递方式：**没有 <initvar> 标签**、只有注释前缀 `[initvar]`
+// 的裸 YAML（`异世界农场` 的 `[initvar]变量初始化勿开`，content 里就是
+// `时间:` / `种族好感度:` 这样的裸文本）。按标签扫描永远扫不到它，所以这张卡
+// 以前是 schemas: 0。
+console.log('\n[10] 真实卡：异世界农场 —— 裸 [initvar] 世界书条目（本轮修复）')
 const farm = findCard('异世界农场')
 if (!farm) {
   console.log('  SKIP 找不到 异世界农场')
@@ -358,15 +358,131 @@ if (!farm) {
   const entry = (card.data.character_book?.entries || [])
     .find(e => /^\[initvar\]/i.test(String(e?.comment || '')))
   check('确实存在注释为 [initvar]… 的世界书条目', !!entry, entry?.comment)
-  check('★那份 content 里没有 <initvar> 标签（所以按标签扫不到）',
+  check('那份 content 里没有 <initvar> 标签（所以按标签扫不到，这就是本轮要接的洞）',
     !!entry && !/<initvar>/i.test(String(entry.content || '')),
     'content 前 40 字: ' + String(entry?.content || '').slice(0, 40))
   const parsed = parseMuvCard(card)
-  check('现状：schemas 仍是 0（这条不在本轮范围内）', parsed.schemas.length === 0, 'schemas=' + parsed.schemas.length)
-  check('但 Zod 变量结构读得到（上一轮的修复仍然有效）', String(parsed.zodSource || '').length > 100,
+  check('★ schemas 由 0 变成 3 组', parsed.schemas.length === 3, 'schemas=' + parsed.schemas.length)
+  check('★ 组名是 时间 / 种族好感度 / 个人好感度',
+    parsed.schemas.map(s => s.name).join(',') === '时间,种族好感度,个人好感度',
+    parsed.schemas.map(s => s.name).join(','))
+  check('★ schemaSource 标成 worldbook-initvar', parsed.schemaSource === 'worldbook-initvar', parsed.schemaSource)
+  check('★ 数据读得到（时间.日期 含 05-20）', String(parsed.initvarData?.时间?.日期 || '').includes('05-20'),
+    JSON.stringify(parsed.initvarData?.时间))
+  check('没有产生垃圾 schema（组名里没有 [mvu_update] 那几张文档的键）',
+    !parsed.schemas.some(s => /变量输出格式|变量更新规则|rule/.test(s.name)),
+    parsed.schemas.map(s => s.name).join(','))
+  check('Zod 变量结构读得到（上一轮的修复仍然有效）', String(parsed.zodSource || '').length > 100,
     'zodSource=' + String(parsed.zodSource || '').length)
-  check('没有产生垃圾 schema', parsed.schemas.length === 0 && Object.keys(parsed.initvarData || {}).length === 0)
 }
+
+// ─────────────────────────────────────────────────────────
+// schemaSource 的取值契约 + 三道闸（合成用例，精确覆盖每条分支）
+console.log('\n[11] schemaSource 与裸 [initvar] 的三道闸')
+check('没有变量来源时 schemaSource = none',
+  parseMuvCard({ data: { name: 'none', first_mes: '没变量' } }).schemaSource === 'none')
+check('<initvar> 标签 -> initvar',
+  parseMuvCard({ data: { name: 'a', first_mes: '<initvar>\n甲: 1\n</initvar>' } }).schemaSource === 'initvar')
+check('<VariableInsert> -> variable-insert',
+  parseMuvCard({ data: { name: 'b', first_mes: '<VariableInsert>{"甲":1}</VariableInsert>' } }).schemaSource === 'variable-insert')
+
+// 闸① 只在其它来源全部落空时启用 —— 能解析的卡不许换数据源
+const g1 = parseMuvCard({
+  data: {
+    name: 'g1',
+    first_mes: '<initvar>\n名字: 问候语里的\n</initvar>',
+    character_book: { entries: [{ comment: '[initvar]变量初始化勿开', content: '名字: 世界书里的\n年龄: 3' }] },
+  },
+})
+check('闸① 问候语里的 <initvar> 优先于裸 [initvar] 世界书条目',
+  at(g1.initvarData, '名字') === '问候语里的' && g1.schemaSource === 'initvar',
+  JSON.stringify(g1.initvarData) + ' source=' + g1.schemaSource)
+const g1b = parseMuvCard({
+  data: {
+    name: 'g1b',
+    first_mes: '<VariableInsert>{"问候语里的":1}</VariableInsert>',
+    character_book: { entries: [{ comment: '[initvar]变量初始化勿开', content: '名字: 世界书里的' }] },
+  },
+})
+check('闸① <VariableInsert> 也优先于裸 [initvar] 世界书条目',
+  g1b.initvarData['问候语里的'] === 1 && g1b.schemaSource === 'variable-insert',
+  JSON.stringify(g1b.initvarData) + ' source=' + g1b.schemaSource)
+
+// 闸② 解析出来是空的就不采用
+for (const [label, content] of [['空串', ''], ['只有空白行', '\n\n   \n'], ['只有注释', '# 变量初始化']]) {
+  const g2 = parseMuvCard({
+    data: { name: 'g2', first_mes: '没变量', character_book: { entries: [{ comment: '[initvar]x', content }] } },
+  })
+  check('闸② ' + label + ' -> 不采用（schemas=0 且 source=none）',
+    g2.schemas.length === 0 && g2.schemaSource === 'none' && Object.keys(g2.initvarData).length === 0,
+    'schemas=' + g2.schemas.length + ' source=' + g2.schemaSource + ' data=' + JSON.stringify(g2.initvarData))
+}
+
+// 前缀边界：兄弟约定是**文档**不是数据（苍玄界 / 异世界农场 都有这几条）
+const docOnly = parseMuvCard({
+  data: {
+    name: 'doconly',
+    first_mes: '没变量',
+    character_book: {
+      entries: [
+        { comment: '[mvu_update]变量输出格式', content: '---\n变量输出格式:\n  rule:\n    - must output the update analysis' },
+        { comment: '[mvu_update]变量更新规则', content: '变量更新规则:\n  种族好感度: 0' },
+        { comment: '[mvu_plot]插画强调', content: '---\n[插画强调]\n重要' },
+      ],
+    },
+  },
+})
+check('★ [mvu_update] / [mvu_plot] 条目不被当成变量（文档不是数据）',
+  docOnly.schemas.length === 0 && docOnly.schemaSource === 'none',
+  'schemas=' + docOnly.schemas.length + ' source=' + docOnly.schemaSource + ' data=' + JSON.stringify(docOnly.initvarData))
+
+// 闸③ 采用时标出来源
+const g3 = parseMuvCard({
+  data: {
+    name: 'g3',
+    first_mes: '没变量',
+    character_book: { entries: [{ comment: '说明： [initvar] 是约定', content: '干扰: 1' }, { comment: '[initvar]变量初始化勿开', content: '甲: 1\n乙:\n  丙: 2' }] },
+  },
+})
+check('闸③ 裸 [initvar] 条目被采用并标出来源（注释里有 [initvar] 但不在行首的不算）',
+  g3.schemas.length === 2 && g3.schemaSource === 'worldbook-initvar' && at(g3.initvarData, '乙.丙') === 2,
+  'schemas=' + g3.schemas.length + ' source=' + g3.schemaSource + ' data=' + JSON.stringify(g3.initvarData))
+
+// 闸②的形状判定：content 必须**读起来像变量映射**。parseInitvar 从不抛异常（它丢掉
+// 用不上的行、返回剩下的），所以"能解析"不能当证据 —— 散文/说明文档必须被挡住。
+for (const [label, content] of [
+  ['全角冒号的散文', '变量初始化格式说明：请在每轮回复结尾输出 JSONPatch。'],
+  ['带一个键的说明文档', '说明:\n  本条目用于记录变量初始化格式，具体写法见下方的规则说明文字。'],
+  ['说明 + 段落（一行不像键就足够否决）', '时间:\n  日期: 05-20\n这一段是作者写给玩家看的说明文字，没有冒号。'],
+]) {
+  const g2b = parseMuvCard({
+    data: { name: 'g2b', first_mes: '没变量', character_book: { entries: [{ comment: '[initvar]变量初始化勿开', content }] } },
+  })
+  check('闸② 形状判定挡住：' + label,
+    g2b.schemas.length === 0 && g2b.schemaSource === 'none', 'schemas=' + g2b.schemas.length + ' source=' + g2b.schemaSource)
+}
+check('闸② 合法的列表值不会被误否决',
+  parseMuvCard({
+    data: { name: 'g2c', first_mes: '没变量', character_book: { entries: [{ comment: '[initvar]x', content: '人际交往:\n  沈慕微:\n    最近互动记录:\n      - 因为想吃灵鹤被{{user}}抓包。\n    关系标签: 师尊' }] } },
+  }).schemaSource === 'worldbook-initvar')
+
+// ★ `enabled: false` 的豁免是**有意**的，不是漏判：
+// `异世界农场` 要读的那条本身就是 `enabled: false`（comment 还写着「勿开」）。
+// 作者的约定是「把变量树放进一个禁用的条目，避免它被注入上下文，工具链仍可读取」。
+// 若要求条目必须启用，这条兜底在唯一需要它的卡上就是空转（见 repro-wb-initvar.mjs 实测）。
+// 挡住垃圾的是 `[initvar]` 标记 + 上面的形状判定，不是 enabled。
+check('★ disabled 的 [initvar] 条目照样读（作者的约定就是把它关掉）',
+  parseMuvCard({
+    data: { name: 'dis', first_mes: '没变量', character_book: { entries: [{ comment: '[initvar]变量初始化勿开', content: '甲: 1', enabled: false }] } },
+  }).schemaSource === 'worldbook-initvar')
+check('★ enabled 的 [initvar] 条目也读（两种都认）',
+  parseMuvCard({
+    data: { name: 'en', first_mes: '没变量', character_book: { entries: [{ comment: '[initvar]变量初始化', content: '甲: 1', enabled: true }] } },
+  }).schemaSource === 'worldbook-initvar')
+check('★ disabled 且没有 [initvar] 标记的条目永远不读',
+  parseMuvCard({
+    data: { name: 'dis2', first_mes: '没变量', character_book: { entries: [{ comment: '变量初始化', content: '甲: 1', enabled: false }] } },
+  }).schemaSource === 'none')
 
 console.log(`\n=== 结果: ${pass} 通过, ${fail} 失败 ===`)
 process.exit(fail ? 1 : 0)
