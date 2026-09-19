@@ -1,6 +1,6 @@
 {
   "name": "dsh-muv-table",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "MUV 变量表格编辑器 —— 树形变量面板、宏测试浮窗（random/pick/roll）、骰子快捷栏、pick 缓存管理；支持直接读取 SillyTavern PNG 角色卡（含正则脚本、世界书、变量表）。dsh-muv-engine 的伴生插件",
   "type": "module",
   "main": "lib/index.js",
@@ -10,7 +10,7 @@
     "./lib/*": "./lib/*",
     "./package.json": "./package.json"
   },
-  "files": ["lib", "cordis.patch.yml", "CHANGELOG.md"],
+  "files": ["lib", "cordis.patch.yml", "CHANGELOG.md", "README.md", "test-png-card.mjs"],
   "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "muv", "magvarupdate", "tavern", "variable-table"],
   "license": "PolyForm-Noncommercial-Copyleft-1.0.0",
   "dsh": {
