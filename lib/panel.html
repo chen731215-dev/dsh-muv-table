@@ -46,6 +46,15 @@ body { font-family: 'Segoe UI', 'Noto Sans SC', system-ui, sans-serif; backgroun
 </div>
 <script>
 let state = { cardName: '', schemas: [], initvarData: {}, edits: {}, generatedBlock: '' }
+// Where the variable tree was read from, shown next to the card name. `worldbook-initvar`
+// is the only *heuristic* source (a world-book entry marked `[initvar]` with bare YAML
+// and no tag), so it has to be visible — otherwise a wrong guess looks exactly like a
+// card that genuinely declares its variables.
+const SOURCE_LABEL = { 'initvar': '<initvar> 块', 'variable-insert': '<VariableInsert>', 'worldbook-initvar': '世界书 [initvar] 条目', 'none': '' }
+function badgeText(d) {
+  const label = SOURCE_LABEL[d.schemaSource]
+  return d.name + (label ? ' · ' + label : '')
+}
 function handleDrop(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) loadFile(f) }
 function handleFile(e) { const f = e.target.files[0]; if (f) loadFile(f) }
 function loadFile(f) { const r = new FileReader(); r.onload = () => { try { parseCard(JSON.parse(r.result)) } catch(err) { alert('JSON error: '+err.message) } }; r.readAsText(f) }
@@ -55,7 +64,7 @@ async function parseCard(json) {
     const r = await fetch('/api/muv-table/parse-card', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(json) })
     const d = await r.json(); if (!d.ok) throw new Error(d.error)
     state = { cardName: d.name, schemas: d.schemas, initvarData: d.initvarData, edits: {}, generatedBlock: '' }
-    document.getElementById('badge').style.display = 'inline'; document.getElementById('badge').textContent = d.name
+    document.getElementById('badge').style.display = 'inline'; document.getElementById('badge').textContent = badgeText(d)
     document.getElementById('btnGenerate').style.display = 'inline-block'
     renderTable()
   } catch(e) { document.getElementById('main').innerHTML = '<div style="padding:12px;color:var(--danger)">⚠ '+e.message+'</div>' }
