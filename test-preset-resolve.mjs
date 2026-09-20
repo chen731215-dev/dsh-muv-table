@@ -181,11 +181,46 @@ check('结果可解释：要么 found:false，要么标成 session-default',
   'found=' + r7.body?.found + ' source=' + r7.body?.presetSource)
 check('绝不谎称 explicit', r7.body?.presetSource !== 'explicit', r7.body?.presetSource)
 
-console.log('\n[8] 两个定位参数同时给：presetId 优先（客户端只该给一个）')
-const r8 = await call('?presetId=real-preset&sessionId=session-bound-default')
+// ── 8) ★ 串台钉子：会话绑定优先于显式 presetId ───────────────
+//
+// 实测事故：客户端两个 id 都送、且 presetId 排在前面，而 presetId 来自酒馆面板的
+// `dataset.presetId` / localStorage —— **切换会话后它可能仍是上一个会话的预设**。
+// 于是用户切到「瑟瑟提瓦特」后，服务端还按「足控天堂」的 presetId 出卡，**串台**。
+//
+// 会话 id 是唯一随会话切换必然变化的依据（服务端按 session-bindings.json 查），必须优先。
+console.log('\n[8] ?sessionId=session-bound-real&presetId=tavern-lite（会话绑定 A + 过期的 presetId B）')
+const r8 = await call('?sessionId=session-bound-real&presetId=tavern-lite')
 show('返回', r8)
-check('用 presetId 那个', r8.body?.presetDir === 'real-preset' && r8.body?.presetSource === 'explicit',
-  r8.body?.presetDir + '/' + r8.body?.presetSource)
+check('★ 解析出会话绑定的那个（real-preset），不是过期的 presetId',
+  r8.body?.presetDir === 'real-preset', r8.body?.presetDir)
+check('★ presetSource=session（一眼能看出这个结果是按会话来的）',
+  r8.body?.presetSource === 'session', r8.body?.presetSource)
+check('★ 绝不能是 explicit（那就说明 presetId 又盖掉了会话）',
+  r8.body?.presetSource !== 'explicit', r8.body?.presetSource)
+
+console.log('\n[8b] ?presetId=tavern-lite（没有 sessionId：原语义必须保持）')
+const r8b = await call('?presetId=tavern-lite')
+show('返回', r8b)
+check('found:true', r8b.body?.found === true, 'found=' + r8b.body?.found)
+check('按 presetId 取到 tavern-lite', r8b.body?.presetDir === 'tavern-lite', r8b.body?.presetDir)
+check('presetSource=explicit（没有会话时它就是显式指定）',
+  r8b.body?.presetSource === 'explicit', r8b.body?.presetSource)
+
+console.log('\n[8c] ?sessionId=session-bound-real&presetId=tavern-lite&preferPreset=1（显式开关）')
+const r8c = await call('?sessionId=session-bound-real&presetId=tavern-lite&preferPreset=1')
+show('返回', r8c)
+check('★ preferPreset=1 时按 presetId 走（不把需要它的调用方语义悄悄改掉）',
+  r8c.body?.presetDir === 'tavern-lite' && r8c.body?.presetSource === 'explicit',
+  r8c.body?.presetDir + '/' + r8c.body?.presetSource)
+
+console.log('\n[8d] ?sessionId=session-bound-gone&presetId=tavern-lite（会话绑定悬空 + 有 presetId）')
+const r8d = await call('?sessionId=session-bound-gone&presetId=tavern-lite')
+show('返回', r8d)
+check('★ 仍报 found:false：会话绑定的预设不存在时，不许退回用 presetId 静默换一张卡',
+  r8d.body?.found === false, 'found=' + r8d.body?.found + ' dir=' + r8d.body?.presetDir)
+check('错误里点名的是会话绑定的那个已消失预设',
+  typeof r8d.body?.error === 'string' && r8d.body.error.includes('renamed-away'),
+  JSON.stringify(r8d.body?.error))
 
 // ── 9) 畸形卡不再 500（④ 的端点面） ────────────────────────
 console.log('\n[9] 畸形卡（alternate_greetings 是对象）走端点')
