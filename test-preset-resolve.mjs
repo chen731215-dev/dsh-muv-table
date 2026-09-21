@@ -222,6 +222,56 @@ check('错误里点名的是会话绑定的那个已消失预设',
   typeof r8d.body?.error === 'string' && r8d.body.error.includes('renamed-away'),
   JSON.stringify(r8d.body?.error))
 
+// ── 8e) 串台回归：没有会话依据时**不许**回落到"最近写入的会话"的预设 ──────────
+// 只断言"结果是 default"是**证明不了东西**的：若夹具里不存在"最近写入且有绑定的会话"，
+// 旧代码同样会给 default，这条用例就静默失效。所以先**造出**该条件，再**断言条件成立**。
+const sessDir = path.join(tmp, 'storages', 'session_projcache', 'sessions')
+fs.mkdirSync(sessDir, { recursive: true })
+const recentSess = path.join(sessDir, 'session-bound-real.json')
+fs.writeFileSync(recentSess, '{}', 'utf8')
+const _t = Date.now() / 1000
+fs.utimesSync(recentSess, _t, _t + 30)   // 把它变成"最近写入"的那个会话文件
+const _bindNow = JSON.parse(fs.readFileSync(path.join(presets, 'session-bindings.json'), 'utf8'))
+check('前置条件：夹具里确实有「最近写入 + 绑定可解析」的会话（否则本用例没有鉴别力）',
+  _bindNow['session-bound-real'] === 'real-preset' &&
+  fs.existsSync(path.join(presets, 'real-preset')),
+  'bind=' + _bindNow['session-bound-real'])
+
+console.log('\n[8e] 无参数（没有会话依据，但存在"最近写入的会话"的绑定）')
+const r8e = await call('')
+show('返回', r8e)
+check('★ 绝不许回落到 active —— 那正是"基本上每个会话都变成看同一张卡"的串台向量',
+  r8e.body?.presetSource !== 'active', 'presetSource=' + r8e.body?.presetSource)
+check('落到稳定默认（presetSource=default，而不是别人会话的卡）',
+  r8e.body?.presetSource === 'default', r8e.body?.presetSource + ' / ' + r8e.body?.presetDir)
+
+// ── 8f) ★ 交叉复核发现：显式 presetId 被"会话优先"规则忽略时**不许静默吞掉** ────────
+//
+// 机制：会话存在但未绑定 ⇒ `fromSession()` 把 `defaultPresetDir()` 写进了 `presetDir`，
+// 于是后面那句 `if (!presetDir && !missing && presetId) fromExplicit()` **永远进不去**。
+// 于是 `?sessionId=<未绑定>&presetId=A` 会返回 tavern-lite，**显式给的 A 被静默丢弃** ——
+// 与被修掉的串台是同一症状类：拿到不是你要的卡，而且不告诉你。
+//
+// 行为保持不变（要强制用 A 请带 `preferPreset=1`，见 [8c]），但必须在响应里说明。
+// 这里故意让 presetId 指向一个**真实存在且与结果不同**的预设（real-preset vs tavern-lite），
+// 这样"它确实没生效"和"我们如实说了"两件事能同时被钉住。
+console.log('\n[8f] ?sessionId=session-unbound&presetId=real-preset（会话未绑定 + 显式 presetId）')
+const r8f = await call('?sessionId=session-unbound&presetId=real-preset')
+show('返回', r8f)
+check('会话优先：落在 tavern-lite，显式 presetId 未生效',
+  r8f.body?.presetDir === 'tavern-lite', 'presetDir=' + r8f.body?.presetDir)
+check('来源如实标 session-default（不是谎称 explicit）',
+  r8f.body?.presetSource === 'session-default', r8f.body?.presetSource)
+check('★ 不许静默吞掉：note 里说明 presetId 被忽略、并指出逃生门 preferPreset=1',
+  typeof r8f.body?.note === 'string' && r8f.body.note.includes('preferPreset'),
+  JSON.stringify(r8f.body?.note))
+check('★ 并点名被忽略的是哪个 presetId（调用方能自查）',
+  r8f.body?.ignoredPresetId === 'real-preset', 'ignoredPresetId=' + r8f.body?.ignoredPresetId)
+check('反向：带 preferPreset=1 时它**必须**生效（逃生门真的可用，不是空话）',
+  (await call('?sessionId=session-unbound&presetId=real-preset&preferPreset=1')).body?.presetDir === 'real-preset')
+check('反向：没有显式 presetId 时不该出现 note（避免噪音字段）',
+  (await call('?sessionId=session-unbound')).body?.note === undefined)
+
 // ── 9) 畸形卡不再 500（④ 的端点面） ────────────────────────
 console.log('\n[9] 畸形卡（alternate_greetings 是对象）走端点')
 const r9 = await call('?presetId=malformed-preset')

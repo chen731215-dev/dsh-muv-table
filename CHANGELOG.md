@@ -188,7 +188,30 @@ HTTP 200 { ok:true, found:true, cardName:'川上富江', presetDir:'tavern-lite'
 | `sessionId` 绑定到真实预设 | 用它，`presetSource: 'session'` |
 | `sessionId` 绑定**已消失**（改名） | `found:false`，`error: preset bound to session … not found: <旧名>` |
 | `sessionId` 绑定为 `default` / 无绑定 | 用酒馆自己的默认（tavern-lite），`presetSource: 'session-default'` |
-| 两个定位参数都没给 | 按「最近写入的会话」猜，`presetSource: 'active'`；猜不到才用默认，`presetSource: 'default'` |
+| 两个定位参数都没给 | **稳定默认**（tavern-lite），`presetSource: 'default'` |
+| 两个定位参数都没给，但**显式**带 `preferActive=1` | 才按「最近写入的会话」猜，`presetSource: 'active'`；猜不到仍用默认 |
+| `preferPreset=1` + `presetId` | 强制按该 presetId 解析（诊断/卡库检查用），语义是「我就是要它，别管会话」 |
+
+**`presetSource` 取值集合（冻结，改动须同步此表）**：
+`'explicit'` | `'session'` | `'session-default'` | `'default'` | `'active'`。
+其中 `'active'` **现在必须显式带 `preferActive=1` 才可达**，且仓库内**没有任何调用方消费它**
+（`HANDOFF.md` 已记「服务端诚实上报但客户端从不消费」—— 客户端连 `presetSource` 都没读）。
+
+> **2026-09 收窄（重要）**：原来「两个定位参数都没给」会**无条件**回落到 `activePresetId()`，
+> 也就是按 `<DSH_HOME>/storages/session_projcache/sessions` 下会话文件的 **mtime 倒序**
+> 取"最近写入的会话"的绑定。这条路径是**串台的真凶之一**：开发/被测会话在不停写文件，
+> 该值会漂移 —— 实测它当时返回的是「安装 dsh-tavern-v2 及其附属插件」那个**开发会话**的绑定。
+> 现在收窄为**只有显式 `preferActive=1` 才走**；否则落到稳定默认并如实标 `default`。
+>
+> ⚠️ 更要紧的一层（另一个仓库）：真实 DSH 会话的预设声明在
+> `<DSH_HOME>/sessions/<cwd>/<uuid>/session.jsonl.zstd` 的**事件流**里
+> （`agent-preset/selected` 事件 / header 的 `agentPreset`），**实测 260/260 个会话都有**；
+> 而 `session-bindings.json` 只覆盖 39 条、与其中 **229** 个会话**完全没有**记录。
+> 因此**只读 bindings 的 `presetIdForSession()` 对绝大多数真实会话解析不出任何东西**，
+> 这正是「基本上每个会话都变成看同一张卡」的根因。
+> 权威解析应走酒馆的 `GET /api/tavern/current-session?sessionId=`（它读会话事件流 →
+> bindings → default），客户端拿到后再带 `preferPreset=1` 请求本接口。
+> 诊断数据见 `C:\deepseek harness\crosstalk-findings-20260920.md`。
 
 - `default` 这条**是照抄酒馆的规则**，不是猜：`dsh-tavern` 的
   `lib/index.js:2404` 就是 `if (currentPresetId === 'default') currentPresetId = 'tavern-lite'`，
