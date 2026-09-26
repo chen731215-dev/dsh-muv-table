@@ -1,5 +1,35 @@
 # Changelog
 
+## 未发布
+
+### ✨ 新增：面板内「🧰 卡运维」区块（开场白注入 + 卡与脚本状态）
+
+用户口径：**「我有 muv-table 面板，不需要做到酒馆面板里面，集成到 muv-table 面板里面就行了」**
+⇒ 卡相关的运维入口只挂在**本插件自己的视图**里（侧边栏「MUV 表格」→ 面板顶部「🧰 卡运维」，
+默认收起），酒馆管理面板里不再重复一份。
+
+- **📌 开场白**：按钮「➕ 把当前卡的开场白注入会话末尾」→ `POST /api/tavern/greeting/insert`。
+  - 请求体**只带 `sessionId`**：服务端按会话权威解析预设。带 `presetId` 会引入"会粘住的猜"
+    （本仓库已在 v0.2.9 起整条删除酒馆 DOM / localStorage 的预设读取路径），不把猜发出去。
+  - 成功 → 绿色「✅ 已注入「卡名」的开场白（N 字，第 M 回合）」；
+    `greeting-already-present` → 蓝色「本会话已有开场白，无需重复注入」（**不是报错**）；
+    会话不活跃（404 + JSON）→ 照原样显示服务端原因；路由不存在（404/405 非 JSON）或
+    fetch 抛错 → 橙色降级提示，**不崩面板**。
+- **🧩 卡与脚本状态（只读）**：当前会话绑定的卡名 / 卡脚本 `enabled/total`（接口不可用
+  就**隐藏该行**，不显示假的 `0/0`）/ 运行时变量树顶层键数量 / 客户端构建号。
+- **🔄 刷新**：重查上面全部只读项。
+- 逻辑与 UI 分离：`cardOpsInsertGreeting` / `cardOpsLoadStatus` 是纯函数（不碰 React/DOM），
+  UI 只负责显示；**未改动**本插件既有的解析 / 正则 / 卡功能，纯客户端改动（刷新页面即生效，
+  不需要重启 DSH）。
+
+### ✅ 测试：`test-card-ops.mjs`（19 通过 / 0 失败）
+
+**逐字提取** `lib/client.js` 里 `[[card-ops-greeting-start/end]]` 标记之间的函数执行，
+断言"点按钮 → 发出去的请求体"：URL / 方法 / content-type / body 形状；以及五个响应分支
+（成功 / 已存在 / 会话不活跃 / 接口不存在 / 网络不可达）。
+含**对照组**：把请求体改回"带上猜出来的 `presetId`"后，[B] 组断言必须变红
+（实测整轮 16 通过 3 失败 / 退出码 1），证明断言不是永真。
+
 ## v0.2.12 (2026-09-20)
 
 ### 🐛 修复：发布包里缺 `test-cards.mjs`，导致随包发布的 `test-muv-parser.mjs` 装完跑不起来
@@ -188,7 +218,30 @@ HTTP 200 { ok:true, found:true, cardName:'川上富江', presetDir:'tavern-lite'
 | `sessionId` 绑定到真实预设 | 用它，`presetSource: 'session'` |
 | `sessionId` 绑定**已消失**（改名） | `found:false`，`error: preset bound to session … not found: <旧名>` |
 | `sessionId` 绑定为 `default` / 无绑定 | 用酒馆自己的默认（tavern-lite），`presetSource: 'session-default'` |
-| 两个定位参数都没给 | 按「最近写入的会话」猜，`presetSource: 'active'`；猜不到才用默认，`presetSource: 'default'` |
+| 两个定位参数都没给 | **稳定默认**（tavern-lite），`presetSource: 'default'` |
+| 两个定位参数都没给，但**显式**带 `preferActive=1` | 才按「最近写入的会话」猜，`presetSource: 'active'`；猜不到仍用默认 |
+| `preferPreset=1` + `presetId` | 强制按该 presetId 解析（诊断/卡库检查用），语义是「我就是要它，别管会话」 |
+
+**`presetSource` 取值集合（冻结，改动须同步此表）**：
+`'explicit'` | `'session'` | `'session-default'` | `'default'` | `'active'`。
+其中 `'active'` **现在必须显式带 `preferActive=1` 才可达**，且仓库内**没有任何调用方消费它**
+（`HANDOFF.md` 已记「服务端诚实上报但客户端从不消费」—— 客户端连 `presetSource` 都没读）。
+
+> **2026-09 收窄（重要）**：原来「两个定位参数都没给」会**无条件**回落到 `activePresetId()`，
+> 也就是按 `<DSH_HOME>/storages/session_projcache/sessions` 下会话文件的 **mtime 倒序**
+> 取"最近写入的会话"的绑定。这条路径是**串台的真凶之一**：开发/被测会话在不停写文件，
+> 该值会漂移 —— 实测它当时返回的是「安装 dsh-tavern-v2 及其附属插件」那个**开发会话**的绑定。
+> 现在收窄为**只有显式 `preferActive=1` 才走**；否则落到稳定默认并如实标 `default`。
+>
+> ⚠️ 更要紧的一层（另一个仓库）：真实 DSH 会话的预设声明在
+> `<DSH_HOME>/sessions/<cwd>/<uuid>/session.jsonl.zstd` 的**事件流**里
+> （`agent-preset/selected` 事件 / header 的 `agentPreset`），**实测 260/260 个会话都有**；
+> 而 `session-bindings.json` 只覆盖 39 条、与其中 **229** 个会话**完全没有**记录。
+> 因此**只读 bindings 的 `presetIdForSession()` 对绝大多数真实会话解析不出任何东西**，
+> 这正是「基本上每个会话都变成看同一张卡」的根因。
+> 权威解析应走酒馆的 `GET /api/tavern/current-session?sessionId=`（它读会话事件流 →
+> bindings → default），客户端拿到后再带 `preferPreset=1` 请求本接口。
+> 诊断数据见 `C:\deepseek harness\crosstalk-findings-20260920.md`。
 
 - `default` 这条**是照抄酒馆的规则**，不是猜：`dsh-tavern` 的
   `lib/index.js:2404` 就是 `if (currentPresetId === 'default') currentPresetId = 'tavern-lite'`，
