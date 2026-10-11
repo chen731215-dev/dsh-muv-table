@@ -10,6 +10,8 @@
 //   ⑥ `键: ""` 空字符串被序列化成裸的 `键: `，再解析回来变成 `{}`（类型静默翻转）
 //   ⑦ 世界书里只有注释前缀 `[initvar]`、没有 `<initvar>` 标签的裸 YAML 条目读不到
 //      → 该卡 schemas 永远是 0（`异世界农场`）；[11] 节连四道闸一起钉住
+//   ⑧ 同一个 `[initvar]` 条目装的是 **JSON** 而不是 YAML（`黄金庭院-昔涟`）→ 整棵变量树
+//      读不出来，状态栏 `_.get(sys,'日期',['未知'])[0]` 恒走兜底；[12] 节
 //
 // 真实卡只在存在时才测（缺失 → SKIP），合成卡负责精确覆盖每条分支。
 
@@ -483,6 +485,125 @@ check('★ disabled 且没有 [initvar] 标记的条目永远不读',
   parseMuvCard({
     data: { name: 'dis2', first_mes: '没变量', character_book: { entries: [{ comment: '变量初始化', content: '甲: 1', enabled: false }] } },
   }).schemaSource === 'none')
+
+// ─────────────────────────────────────────────────────────
+// ⑧ 世界书 `[initvar]` 条目里装的是 **JSON** 而不是 YAML（`黄金庭院-昔涟` 就是这种）。
+//
+// 病灶现象在 UI 上很远：卡自带的状态栏恒为「未知」、角色网格一个角色都没有。真因是
+// 那张卡把整棵变量树（`系统.日期/时间/地点` + 全体角色档案）以 MUV 的 `$meta` 约定
+// 写在一个 `[InitVar]` 世界书条目里，内容是从 `{` 开始的 JSON；走到 YAML 闸门时被判
+// 「不像变量映射」否决（`{` / `},` / `}` 不是 `键: 值`），于是 schemaSource 落到
+// 'none'、`initvarData` 是空对象 —— 状态栏的 `_.get(sys,'日期',['未知'])[0]` 永远只能
+// 拿到兜底值，跟运行时有没有变量无关。
+console.log('\n[12] 世界书 [initvar] 条目装的是 JSON（黄金庭院-昔涟）')
+
+// 形状照真实卡：$meta 是 MVU 的控制元数据；叶子写成 [值, 说明] 的数组。
+const JSON_TREE = JSON.stringify({
+  '$meta': { extensible: false, strictSet: true },
+  '系统': {
+    '日期': ['2025年04月10日', '格式为YYYY年MM月DD日'],
+    '时间': ['09:00', '格式为hh:mm'],
+    '地点': ['黄金庭院-客厅', '当前主要场景地点'],
+  },
+  '昔涟': { '好感度': ['50', '0-100'] },
+}, null, 2)
+
+/** 一张世界书装了给定内容的合成卡；first_mes 留给「更高优先级来源」的用例用。 */
+function cardWithWbJson(content, firstMes = '没变量') {
+  return parseMuvCard({
+    data: {
+      name: 'wbjson',
+      first_mes: firstMes,
+      // enabled:false 是作者的约定（把变量树关掉免得注入上下文），必须照样能读。
+      character_book: { entries: [{ comment: '[InitVar]', content, enabled: false }] },
+    },
+  })
+}
+
+const j1 = cardWithWbJson(JSON_TREE)
+check('★ JSON 变量树被读出来源 = worldbook-initvar-json',
+  j1.schemaSource === 'worldbook-initvar-json', 'source=' + j1.schemaSource)
+check('系统.日期/时间/地点 都在，且保留 [值, 说明] 数组形态',
+  at(j1.initvarData, '系统.日期')?.[0] === '2025年04月10日' &&
+  at(j1.initvarData, '系统.时间')?.[0] === '09:00' &&
+  at(j1.initvarData, '系统.地点')?.[0] === '黄金庭院-客厅',
+  JSON.stringify(at(j1.initvarData, '系统')))
+check('★ 状态栏口径不再走兜底：`(_.get(sys,"日期")||["未知"])[0]`',
+  (at(j1.initvarData, '系统.日期') || ['未知'])[0] === '2025年04月10日',
+  '取到=' + JSON.stringify((at(j1.initvarData, '系统.日期') || ['未知'])[0]))
+// 「$meta 不在结果里」这种断言空转时会恒真（树本来就是空的也说没有 $meta），所以
+// 先把反例钉住：源 JSON **确实带** $meta（这里也兜住 JSON_TREE 本身被改坏的情况），
+// 再断言它没进结果 —— 这样它量的是「被筛掉」，而不是「压根没喂进来」。
+check('★ 源 JSON 里确实有 $meta，且没进变量树 / schema',
+  Object.keys(JSON.parse(JSON_TREE)).includes('$meta') &&
+  !Object.keys(j1.initvarData).includes('$meta') && !j1.schemas.some(s => s.name === '$meta'),
+  '源 keys=' + Object.keys(JSON.parse(JSON_TREE)).join(',') + ' | 结果 keys=' + Object.keys(j1.initvarData).join(','))
+check('schema 建起来了（系统 + 昔涟）',
+  j1.schemas.length === 2 && fieldAt(j1.schemas, '系统.日期') !== undefined,
+  'schemas=' + j1.schemas.length + ' leaves=' + leafPaths(j1.schemas).join(','))
+
+// 闸① 这条兜底只在其它来源全空时启用 —— 能解析的卡不许换数据源
+check('闸① 问候语里的 <initvar> 优先于 JSON 世界书条目',
+  cardWithWbJson(JSON_TREE, '<initvar>\n名字: 问候语里的\n</initvar>').schemaSource === 'initvar')
+check('闸① <VariableInsert> 也优先于 JSON 世界书条目',
+  cardWithWbJson(JSON_TREE, '<VariableInsert>{"问候语里的":1}</VariableInsert>').schemaSource === 'variable-insert')
+
+// 闸② 形状判定：必须**真的读到 JSON 数据**才采用。凡是进不了 JSON.parse 或不是对象的，
+// 一律退回 none —— 带着半句话就说 { 的文档条目不能混进来。
+const yamlCase = 'YAML 照旧走 YAML 分支'
+for (const [label, content] of [
+  ['破碎的 JSON（括号没闭合）', '{\n  "系统": {\n    "日期": ["x"]\n'],
+  ['顶层是数组的 JSON', '[{"系统":{"日期":["x"]}}]'],
+  ['只有 $meta 的 JSON（等于没变量）', '{"$meta":{"extensible":false}}'],
+  ['以 { 开头但不是 JSON 的散文', '{ 变量初始化格式说明：请在回复结尾输出 JSONPatch }'],
+  ['null / 标量 JSON', '123'],
+  [yamlCase, '甲: 1\n乙:\n  丙: 2'],
+]) {
+  const r = cardWithWbJson(content)
+  const ok = label === yamlCase
+    ? (r.schemaSource === 'worldbook-initvar' && at(r.initvarData, '乙.丙') === 2)
+    : (r.schemaSource === 'none' && Object.keys(r.initvarData).length === 0)
+  check('闸② ' + label + ' -> ' + (label === yamlCase ? 'worldbook-initvar' : '不采用'),
+    ok, 'source=' + r.schemaSource + ' data=' + JSON.stringify(r.initvarData))
+}
+check('前后有 BOM/空白的 JSON 仍读得出（判定用 trim 后的内容）',
+  cardWithWbJson('﻿\n\n  ' + JSON_TREE + '\n\n').schemaSource === 'worldbook-initvar-json')
+
+// ★ 卡片内容是**不可信输入**：JSON.parse 允许 `__proto__` 当普通键，若解析用
+// `vars[key] = value` 赋值，这条就会真的改写对象原型。这条断言在赋值写法下必红。
+const j2 = cardWithWbJson('{"__proto__":{"polluted":1},"系统":{"日期":["2025年04月10日"]}}')
+check('★ JSON 里的 __proto__ 只是普通键，不改写原型',
+  Object.getPrototypeOf(j2.initvarData) === Object.prototype && j2.initvarData.polluted === undefined &&
+  at(j2.initvarData, '系统.日期')?.[0] === '2025年04月10日',
+  'proto改了吗=' + (Object.getPrototypeOf(j2.initvarData) !== Object.prototype) +
+  ' polluted=' + j2.initvarData.polluted + ' data=' + JSON.stringify(j2.initvarData))
+
+// ★ UI 契约：schemaSource 的每个取值都要在 panel.html 的 SOURCE_LABEL 里有对应标签，
+// 漏一个就是界面上渲染出 "undefined"（顺便：这也让「返回值的取值域」有了权威清单）。
+const panelHtml = fs.readFileSync(new URL('./lib/panel.html', import.meta.url), 'utf8')
+const labelBody = /const SOURCE_LABEL = \{([^}]*)\}/.exec(panelHtml)?.[1] ?? ''
+const labelled = new Set([...labelBody.matchAll(/'([^']*)'\s*:/g)].map(m => m[1]))
+const EMITTED = ['initvar', 'variable-insert', 'worldbook-initvar', 'worldbook-initvar-json', 'none']
+const missingLabel = EMITTED.filter(v => !labelled.has(v))
+check('★ panel.html 的 SOURCE_LABEL 覆盖所有 schemaSource 取值',
+  missingLabel.length === 0 && labelled.size > 0,
+  '漏: ' + missingLabel.join(',') + ' | 现有标签=' + [...labelled].join(','))
+
+// 真实卡：这条断言能在修复前变红 —— 它量的是「病因」本身，不是中间过程。
+const golden = findCard('黄金庭院')
+if (!golden) {
+  console.log('  SKIP 找不到 黄金庭院（期望 ~/Downloads/黄金庭院.png）')
+} else {
+  const g = parseMuvCard(readPngCard(golden))
+  check('★ 真实卡黄金庭院：不再读成 none',
+    g.schemaSource === 'worldbook-initvar-json', 'source=' + g.schemaSource)
+  check('状态栏三个字段都拿到真实值',
+    ['日期', '时间', '地点'].every(k => String(at(g.initvarData, '系统.' + k)?.[0] || '').length > 0),
+    JSON.stringify(at(g.initvarData, '系统')))
+  check('角色档案进了变量树（昔涟）',
+    at(g.initvarData, '昔涟.好感度') !== undefined, 'keys=' + Object.keys(g.initvarData).slice(0, 8).join(','))
+  check('$meta 没混进 schema', !g.schemas.some(s => s.name === '$meta'))
+}
 
 console.log(`\n=== 结果: ${pass} 通过, ${fail} 失败 ===`)
 process.exit(fail ? 1 : 0)
