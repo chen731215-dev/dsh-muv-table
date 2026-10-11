@@ -46,11 +46,13 @@ body { font-family: 'Segoe UI', 'Noto Sans SC', system-ui, sans-serif; backgroun
 </div>
 <script>
 let state = { cardName: '', schemas: [], initvarData: {}, edits: {}, generatedBlock: '' }
-// Where the variable tree was read from, shown next to the card name. `worldbook-initvar`
-// is the only *heuristic* source (a world-book entry marked `[initvar]` with bare YAML
-// and no tag), so it has to be visible — otherwise a wrong guess looks exactly like a
-// card that genuinely declares its variables.
-const SOURCE_LABEL = { 'initvar': '<initvar> 块', 'variable-insert': '<VariableInsert>', 'worldbook-initvar': '世界书 [initvar] 条目', 'none': '' }
+// Where the variable tree was read from, shown next to the card name. The two
+// `worldbook-initvar*` entries are *heuristic* sources (a world-book entry marked
+// `[initvar]`, no tag, holding bare YAML or JSON), so they have to be visible —
+// otherwise a wrong guess looks exactly like a card that genuinely declares its
+// variables. Every value `parseMuvCard` can emit must have a label here; a missing
+// one would render "undefined" instead of failing loudly (checked in test-muv-parser).
+const SOURCE_LABEL = { 'initvar': '<initvar> 块', 'variable-insert': '<VariableInsert>', 'worldbook-initvar': '世界书 [initvar] 条目', 'worldbook-initvar-json': '世界书 [initvar] 条目 (JSON)', 'none': '' }
 function badgeText(d) {
   const label = SOURCE_LABEL[d.schemaSource]
   return d.name + (label ? ' · ' + label : '')
